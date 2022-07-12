@@ -2,9 +2,7 @@ flutter web host on firebase
 
 aws dynamoDB store table like
 
-	Table scan: Id, time, status, userID, reportID
-	
-	Table report: ID, info (JSON), 
+	Table scan: Id, time, status, userID, result
 
 	Table user: Id 
 
