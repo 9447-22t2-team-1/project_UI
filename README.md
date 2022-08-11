@@ -1,3 +1,6 @@
+![Sahara](logo4.png)
+
+
 # Sahara
 
 This documentation will take the reader through **Installation**, **Usage** and **Additional notes** regarding the Sahara project
@@ -14,6 +17,8 @@ Users will need to navigate to the CloudFormation service in AWS. That can be fo
 Users will then choose to **Create stack**/**With existing resources**. Users are then prompted to upload a template file, which should be `template.yaml`. 
 
 Users will be able to enter in their table names (such as 'Pipeline',) their stack name (such as 'MyStack') and then proceed.
+
+On the next page with resources, users need to fill out the following
 
 ## Usage
 
