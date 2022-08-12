@@ -1,29 +1,36 @@
 AWSTemplateFormatVersion: "2010-09-09"
 Metadata:
-    Generator: "former2"
+    Generator: "COMP9447-T2-2022-Team1"
 Description: ""
 Resources:
     IAMRole:
         Type: "AWS::IAM::Role"
         Properties:
             Path: "/service-role/"
-            RoleName: "CreateEC2test-role-mv6ywc7m"
+            RoleName: "InitEC2Role"
             AssumeRolePolicyDocument: "{\"Version\":\"2012-10-17\",\"Statement\":[{\"Effect\":\"Allow\",\"Principal\":{\"Service\":\"lambda.amazonaws.com\"},\"Action\":\"sts:AssumeRole\"}]}"
             MaxSessionDuration: 3600
             ManagedPolicyArns: 
-              - !Sub "arn:aws:iam::${AWS::AccountId}:policy/service-role/AWSLambdaBasicExecutionRole-b7203a65-e96b-478d-8f45-52bea41b8a09"
+              - !Ref IAMManagedPolicy
               - "arn:aws:iam::aws:policy/IAMFullAccess"
               - "arn:aws:iam::aws:policy/AmazonDynamoDBFullAccess"
+
+    IAMInstanceProfile:
+        Type: "AWS::IAM::InstanceProfile"
+        Properties:
+            Path: "/"
+            InstanceProfileName: !Ref IAMRole3
+            Roles: 
+              - !Ref IAMRole3
 
     IAMRole2:
         Type: "AWS::IAM::Role"
         Properties:
             Path: "/service-role/"
-            RoleName: !Sub "${LambdaFunction2}-role-6ou5t13r"
+            RoleName:  "QueryReportRole"
             AssumeRolePolicyDocument: "{\"Version\":\"2012-10-17\",\"Statement\":[{\"Effect\":\"Allow\",\"Principal\":{\"Service\":\"lambda.amazonaws.com\"},\"Action\":\"sts:AssumeRole\"}]}"
             MaxSessionDuration: 3600
             ManagedPolicyArns: 
-              - !Sub "arn:aws:iam::${AWS::AccountId}:policy/service-role/AWSLambdaBasicExecutionRole-ffa727ea-c734-49a7-8638-2ce97e30e1ef"
               - "arn:aws:iam::aws:policy/AmazonDynamoDBFullAccess"
 
     IAMRole3:
@@ -50,13 +57,93 @@ Resources:
                     KEY_NAME: "Team1_Keypair"
                     REGION: !Ref AWS::Region
             FunctionName: "InitEC2"
-            Handler: "lambda_function.lambda_handler"
+            Handler: "index.lambda_handler"
             Architectures: 
               - "x86_64"
             Code: 
-                S3Bucket: "awslambda-ap-se-2-tasks"
-                S3Key: !Sub "/snapshots/${AWS::AccountId}/InitEC2-340616ca-f020-48e3-a29c-fc76265d6753"
-                S3ObjectVersion: "hnTgysK32x2kiXC9NfD1QMm_YV7UzybY"
+                ZipFile: !Sub | 
+                    import os
+                    import boto3
+                    import datetime
+                    import json
+                    AMI = os.environ['AMI']
+                    INSTANCE_TYPE = os.environ['INSTANCE_TYPE']
+                    KEY_NAME = os.environ['KEY_NAME']
+                    SUBNET_ID = os.environ['SUBNET_ID']
+                    REGION = os.environ['REGION']
+                    SECURITY = os.environ['SECURITY']
+                    
+
+                    ec2 = boto3.client('ec2', region_name=REGION)
+                    db = boto3.client('dynamodb')
+
+                    def lambda_handler(event, context):
+
+
+                        # need title 
+                        # need userID
+                        # need pipeline
+
+                        userID = event['userID']
+                        title = event['title']
+                        pipeline = event['pipeline']
+                        
+
+                        current_date = datetime.datetime.now()
+                        id = int(current_date.strftime('%Y%m%d%H%M%S'))
+                        item = {'id':{'N':str(id)},'Pipeline':{'S': str(pipeline)},'running':{'BOOL':bool(True)},'title':{'S':str(title)},'userID':{'N':str(userID)},'dateCreated':{'S':str(current_date)}}
+                        db.put_item(TableName='Pipeline', Item=item)
+
+                                                    
+                        user_data = '''#!/bin/bash
+                        echo ''' + str(id) + '''> /home/ubuntu/backend/pipelineID.txt
+                        echo ''' + str(pipeline) + '''> /home/ubuntu/backend/pipeline.txt
+                        cd /home/ubuntu/backend
+                        python3 backendProcessor.py
+                        pipelineID=$(<pipelineID.txt)
+                        pipelineResult=$(</home/ubuntu/backend/Output/PipelineOutputEncoded.txt)
+                        aws dynamodb update-item --table-name Pipeline --key '{"id":{"N":"'"$pipelineID"'"}}' --update-expression "SET pipelineResult = :newMessages, running = :s" --expression-attribute-values '{":newMessages" : {"S": "'"$pipelineResult"'"},":s":{"BOOL":false}}' --region "ap-southeast-2"
+                        shutdown -P now'''
+
+                        # user_data = '''#!/bin/bash
+                        # echo ''' + str(id) + '''> /home/ubuntu/backend/pipelineID.txt
+                        # cd /home/ubuntu/backend
+                        # pipelineID=$(<pipelineID.txt)
+                        # ./snykWrapper.sh https://github.com/snyk/cli
+                        # cat SnykOutput/SnykOutput_001.json | base64 -w 0 > /home/ubuntu/backend/result.txt
+                        # pipelineResult=$(<result.txt)
+                        # aws dynamodb update-item --table-name Pipeline --key '{"id":{"N":"'"$pipelineID"'"}}' --update-expression "SET pipelineResult = :newMessages, running = :s" --expression-attribute-values '{":newMessages" : {"S": "'"$pipelineResult"'"},":s":{"BOOL":false}}' --region "ap-southeast-2"
+                        # shutdown -h now'''
+                        
+                        instance = ec2.run_instances(
+                            ImageId=AMI,
+                            InstanceType=INSTANCE_TYPE,
+                            KeyName=KEY_NAME,
+                            SubnetId=SUBNET_ID,
+                            SecurityGroupIds = [SECURITY],
+                            MaxCount=1,
+                            MinCount=1,
+                            InstanceInitiatedShutdownBehavior='terminate',
+                            IamInstanceProfile= {
+                                    'Arn': 'arn:aws:iam::${AWS::AccountId}:instance-profile/read_dynamodb',
+                            },
+                            UserData = user_data
+                        )
+
+                        instance_id = instance['Instances'][0]['InstanceId']
+                        # print(instance_id)
+                        responseObject = {}
+                        responseObject['statusCode'] = 200
+                        responseObject['headers'] = {}
+                        responseObject['headers']['Content-Type'] = 'application/json'
+                        responseObject['headers']['Access-Control-Allow-Origin'] = "*";
+                        responseObject['headers']["Access-Control-Allow-Credentials"] = True;
+                        responseObject['headers']["Access-Control-Allow-Headers"] =  "Origin,Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token,locale";
+                        responseObject['headers']["Access-Control-Allow-Methods"] =  "POST, OPTIONS";
+                        
+                        responseObject['body'] = id
+                        
+                        return responseObject
             MemorySize: 128
             Role: !GetAtt IAMRole.Arn
             Runtime: "python3.9"
@@ -70,16 +157,69 @@ Resources:
         Type: "AWS::Lambda::Function"
         Properties:
             Description: ""
-            FunctionName: "GetScanFromUserID"
-            Handler: "lambda_function.lambda_handler"
+            FunctionName: "QueryReportFunction"
+            Handler: "index.lambda_handler"
             Architectures: 
               - "x86_64"
             Code: 
-                S3Bucket: "awslambda-ap-se-2-tasks"
-                S3Key: !Sub "/snapshots/${AWS::AccountId}/GetScanFromUserID-04d05df3-787c-489d-8f6e-b65e4ac24be5"
-                S3ObjectVersion: "QJpuRx2isGv1c9_4dmvgB6p8R1sIX3aJ"
+                ZipFile: |
+                    import json
+                    import boto3
+                    from boto3.dynamodb.conditions import Key, Attr
+                    from decimal import *
+
+                    dynamodb = boto3.resource('dynamodb')
+                    scanTable = dynamodb.Table('Pipeline')
+
+
+                    def lambda_handler(event, context):
+                        # TODO implement
+                        userID = event['queryStringParameters']['userID']
+                        #userID = "1"
+                        listReport = scanTable.scan(FilterExpression=Attr("userID").eq(Decimal(str(userID))))['Items']
+                        
+                        # print(json.dumps(response))
+                        responseObject = {}
+                        responseObject['statusCode'] = 200
+                        responseObject['headers'] = {}
+                        responseObject['headers']['Content-Type'] = 'application/json'
+                        responseObject['headers']['Access-Control-Allow-Origin'] = "*";
+                        responseObject['headers']["Access-Control-Allow-Credentials"] = True;
+                        responseObject['headers']["Access-Control-Allow-Headers"] =  "Origin,Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token,locale";
+                        responseObject['headers']["Access-Control-Allow-Methods"] =  "POST, OPTIONS";
+                        
+                        
+                        reports = {}
+                        listReports = []
+                        for report in listReport:
+                            if report["running"]:
+                                item = {
+                                    "id":str(report["id"]),
+                                    "title":report["title"],
+                                    "status":str(report["running"]),
+                                    "date":str(report["dateCreated"]),
+                                    "Pipeline": report["Pipeline"],
+                                    "ResultService": ""
+                                }
+                            else:
+                                item = {
+                                    "id":str(report["id"]),
+                                    "title":report["title"],
+                                    "status":str(report["running"]),
+                                    "date":str(report["dateCreated"]),
+                                    "Pipeline": report["Pipeline"],
+                                    "ResultService": report["pipelineResult"]
+                                }
+                            listReports.append(item)
+                            
+                        reports["listReport"] = listReports
+                        responseObject['body'] = json.dumps(reports)
+                        
+                        
+                        return responseObject
+
             MemorySize: 128
-            Role: !Sub "arn:aws:iam::${AWS::AccountId}:role/service-role/GetScanFromUserID-role-6ou5t13r"
+            Role: !GetAtt "IAMRole2.Arn"
             Runtime: "python3.9"
             Timeout: 3
             TracingConfig: 
@@ -137,37 +277,12 @@ Resources:
                 Types: 
                   - "REGIONAL"
 
-    ApiGatewayStage:
-        Type: "AWS::ApiGateway::Stage"
-        Properties:
-            StageName: "Demo"
-            DeploymentId: "9rnt3w"
-            RestApiId: !Ref ApiGatewayRestApi
-            CacheClusterEnabled: false
-            CacheClusterSize: "0.5"
-            MethodSettings: 
-              - 
-                CacheDataEncrypted: false
-                CacheTtlInSeconds: 300
-                CachingEnabled: false
-                DataTraceEnabled: false
-                HttpMethod: "*"
-                MetricsEnabled: false
-                ResourcePath: "/*"
-                ThrottlingBurstLimit: 5000
-                ThrottlingRateLimit: 10000
-            TracingEnabled: false
-
-    ApiGatewayDeployment:
-        Type: "AWS::ApiGateway::Deployment"
-        Properties:
-            RestApiId: !Ref ApiGatewayRestApi
 
     ApiGatewayMethod:
         Type: "AWS::ApiGateway::Method"
         Properties:
             RestApiId: !Ref ApiGatewayRestApi
-            ResourceId: "2zq9wfzq31"
+            ResourceId: !GetAtt ApiGatewayRestApi.RootResourceId
             HttpMethod: "GET"
             AuthorizationType: "NONE"
             ApiKeyRequired: false
@@ -197,7 +312,7 @@ Resources:
         Type: "AWS::ApiGateway::Method"
         Properties:
             RestApiId: !Ref ApiGatewayRestApi
-            ResourceId: "2zq9wfzq31"
+            ResourceId: !GetAtt ApiGatewayRestApi.RootResourceId
             HttpMethod: "OPTIONS"
             AuthorizationType: "NONE"
             ApiKeyRequired: false
@@ -230,7 +345,7 @@ Resources:
         Type: "AWS::ApiGateway::Method"
         Properties:
             RestApiId: !Ref ApiGatewayRestApi
-            ResourceId: "2zq9wfzq31"
+            ResourceId: !GetAtt ApiGatewayRestApi.RootResourceId
             HttpMethod: "POST"
             AuthorizationType: "NONE"
             ApiKeyRequired: false
@@ -255,4 +370,51 @@ Resources:
                 TimeoutInMillis: 29000
                 Type: "AWS"
                 Uri: !Sub "arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:${LambdaFunction}/invocations"
+
+    EC2KeyPair:
+        Type: "AWS::EC2::KeyPair"
+        Properties:
+            KeyName: "Team1_Keypair"
+            KeyType: "rsa"
+
+    IAMManagedPolicy:
+            Type: "AWS::IAM::ManagedPolicy"
+            Properties:
+                ManagedPolicyName: "EC2Permission"
+                Path: "/service-role/"
+                PolicyDocument: |
+                    {
+                        "Version": "2012-10-17",
+                        "Statement": [
+                            {
+                                "Sid": "VisualEditor0",
+                                "Effect": "Allow",
+                                "Action": [
+                                    "dynamodb:*",
+                                    "ec2:*"
+                                ],
+                                "Resource": "*"
+                            },
+                            {
+                                "Sid": "VisualEditor1",
+                                "Effect": "Allow",
+                                "Action": [
+                                    "logs:CreateLogStream",
+                                    "logs:PutLogEvents"
+                                ],
+                                "Resource": "arn:aws:logs:*:*:*"
+                            },
+                            {
+                                "Sid": "VisualEditor2",
+                                "Effect": "Allow",
+                                "Action": "logs:CreateLogGroup",
+                                "Resource": "arn:aws:logs:*:*:*"
+                            },
+                            {
+                                "Effect":"Allow",
+                                "Action":"iam:PassRole",
+                                "Resource":"arn:aws:iam::123456789012:role/*"
+                            }
+                        ]
+                    }
 
